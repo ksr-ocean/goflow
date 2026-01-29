@@ -165,7 +165,7 @@ For best results, we recommend a two-stage training approach:
    - Learns basic velocity patterns
    - Fast convergence
 
-2. **Stage 1**: Fine-tune with spectral loss (`c_spec=0.5`) for ~50 epochs
+2. **Stage 1**: Fine-tune with spectral loss (`c_spec=0.2`) for ~50 epochs
    - Improves spectral characteristics
    - Better small-scale structure
 
@@ -174,7 +174,7 @@ For best results, we recommend a two-stage training approach:
 python train_goflow.py --cuda 0 --model unet --nbase 16 --c_spec 0.0 --epochs 100
 
 # Stage 1 (loads best model from Stage 0)
-python train_goflow.py --cuda 0 --model unet --nbase 16 --c_spec 0.5 --epochs 50
+python train_goflow.py --cuda 0 --model unet --nbase 16 --c_spec 0.2 --epochs 50
 ```
 
 ## Model Checkpoints
