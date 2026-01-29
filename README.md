@@ -12,6 +12,10 @@ GOFLOW trains neural networks to infer ocean flow dynamics (U, V velocity compon
 - Two-stage training workflow for improved spectral characteristics
 - Inference pipeline for GOES satellite brightness temperature data
 
+## Inferred velocity gradients from GOES satellite data
+
+![GOFLOW inference on GOES data](FIG02.png)
+
 ## Installation
 
 ### Requirements
