@@ -1,7 +1,7 @@
 # GOFLOW: Geostationary Ocean Flow
 
 Deep learning framework for predicting ocean surface velocity fields from satellite sea surface temperature (SST) gradient observations.
-
+!(FIG01.png)
 ## Overview
 
 GOFLOW trains neural networks to infer ocean flow dynamics (U, V velocity components) from thermal gradient patterns observed in satellite imagery. The approach leverages the physical relationship between SST gradients and surface currents to enable velocity estimation from widely available satellite observations.
