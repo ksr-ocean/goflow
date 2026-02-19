@@ -2,6 +2,8 @@
 Samudra U-Net Architecture
 ===========================
 ConvNeXt-inspired U-Net variant for GOFLOW velocity field prediction.
+Dheeshjith et al "Samudra: An AI global ocean emulator for climate", GRL, 52.10 (2025): e2024GL114318
+..."inspired" because a lot of the things that make ConvNeXts work are actually not present.
 
 Uses modern ConvNeXt-style blocks with:
 - Depth-wise separable-like convolutions
@@ -14,7 +16,6 @@ Two variants available via padding_mode:
 - 'zeros': Standard zero padding (samudra0)
 - 'reflect': Reflection padding for better boundary handling (samudraR)
 
-Author: Kaushik Srinivasan (UCLA Atmospheric and Oceanic Sciences)
 """
 
 import torch
