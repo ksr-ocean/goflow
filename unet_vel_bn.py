@@ -8,6 +8,8 @@ Adapted from: https://github.com/milesial/Pytorch-UNet
 Modifications:
 1. Nbase parameter to scale model capacity without changing topology
 2. Optional input batch normalization layer
+3. Includes additional potential variants that were not found to improve but might in future.
+4. Optionally includes a PatchGAN discriminator; here adverserial training did not help.
 
 Also includes:
 - VelocityField: Stream function formulation for velocity prediction
