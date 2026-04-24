@@ -13,6 +13,7 @@ import os
 import gc
 import sys
 import argparse
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -72,6 +73,16 @@ def parse_args():
                         help='GOES satellite data file')
     parser.add_argument('--output_dir', type=str, default='./ncfiles/',
                         help='Output directory for NetCDF files')
+    parser.add_argument('--skip_satellite', action='store_true',
+                        help='Skip GOES satellite inference/writes; does not affect training or test metrics')
+    parser.add_argument('--skip_eval_nc', action='store_true',
+                        help='Skip writing bulky test-set NetCDF exports; does not affect training or test metrics')
+    parser.add_argument('--metrics_file', type=str, default='',
+                        help='Optional JSON file for best metrics and histories')
+    parser.add_argument('--regions_file', type=str, default='',
+                        help='Optional JSON file with spatial boxes for follow-up spatial CV')
+    parser.add_argument('--fold', type=int, default=-1,
+                        help='Held-out box index from --regions_file; train on all other boxes')
     
     # Data parameters
     parser.add_argument('--nframes', type=int, default=3, help='Number of input frames')
@@ -120,9 +131,9 @@ def train_epoch(
     
     for ib, (x, y) in enumerate(tqdm(train_loader, desc='Training')):
         x, y = x.to(kernel_x.device), y.to(kernel_x.device)
-        
+
         y_pred = model(x)
-        
+
         # Pointwise L1 loss with boundary masking
         loss_l1 = criterion(
             y.squeeze() * mask[None, None, :, :],
@@ -146,7 +157,7 @@ def train_epoch(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    
+
     return first_batch_losses
 
 
@@ -157,15 +168,18 @@ def evaluate_model(
     kernel_y: torch.Tensor,
     mask: torch.Tensor,
     tukey_window: torch.Tensor
-) -> tuple[float, float]:
+) -> dict:
     """
     Evaluate model on test set.
     
     Returns:
-        Tuple of (mean_r2, mean_spectral_loss)
+        Dict with mean gradient R², velocity R², and spectral loss.
     """
     model.eval()
-    total_r2 = 0.0
+    from sklearn.metrics import r2_score as R2
+
+    total_grad_r2 = 0.0
+    total_velocity_r2 = 0.0
     total_spec_loss = 0.0
     count = 0
     
@@ -173,18 +187,30 @@ def evaluate_model(
         for x, y in tqdm(test_loader, desc='Evaluating'):
             x, y = x.to(kernel_x.device), y.to(kernel_x.device)
             y_pred = model(x)
-            
+
             # Spectral loss
             spec_loss = spectral_loss(y_pred, y, tukey_window)
             
             # R² on gradient fields (vorticity + strain)
-            r2 = compute_gradient_r2(y, y_pred, kernel_x, kernel_y, mask)
+            grad_r2 = compute_gradient_r2(y, y_pred, kernel_x, kernel_y, mask)
+
+            # R² on velocity fields, with the same boundary mask convention.
+            mask_bc = mask[None, None, :, :]
+            velocity_r2 = R2(
+                to_numpy(y * mask_bc),
+                to_numpy(y_pred * mask_bc),
+            )
             
-            total_r2 += r2
+            total_grad_r2 += grad_r2
+            total_velocity_r2 += velocity_r2
             total_spec_loss += spec_loss.item()
             count += 1
     
-    return total_r2 / count, total_spec_loss / count
+    return {
+        'gradient_r2': total_grad_r2 / count,
+        'velocity_r2': total_velocity_r2 / count,
+        'spec_loss': total_spec_loss / count,
+    }
 
 
 def train_model(
@@ -195,12 +221,12 @@ def train_model(
     criterion: nn.Module,
     config: argparse.Namespace,
     device: torch.device
-) -> tuple[nn.Module, np.ndarray]:
+) -> tuple[nn.Module, dict]:
     """
     Full training loop with checkpointing and evaluation.
     
     Returns:
-        Tuple of (best_model, r2_history)
+        Tuple of (best_model, metrics history/summary dict)
     """
     # Setup derivative kernels
     kernel_x = dx_kernel(config.pm).to(device)
@@ -216,8 +242,24 @@ def train_model(
     # Tracking
     best_r2 = -1000
     best_spec = 1000
-    r2_history = np.zeros(config.epochs)
+    history = {
+        'gradient_r2': np.zeros(config.epochs),
+        'velocity_r2': np.zeros(config.epochs),
+        'spec_loss': np.zeros(config.epochs),
+    }
     best_model = None
+    best_summary = {
+        'best_gradient_r2': -1000,
+        'best_gradient_epoch': -1,
+        'best_velocity_r2': -1000,
+        'best_velocity_epoch': -1,
+        'best_spec_loss': 1000,
+        'best_spec_epoch': -1,
+        'selected_epoch': -1,
+        'selected_gradient_r2': -1000,
+        'selected_velocity_r2': -1000,
+        'selected_spec_loss': 1000,
+    }
     
     for epoch in range(config.epochs):
         # Learning rate scheduling
@@ -241,42 +283,94 @@ def train_model(
         print(f'Epoch {epoch+1}: L1={l1_loss:.4f}, {loss_type}={aux_loss:.4f}')
         
         # Evaluate
-        r2, spec_loss = evaluate_model(model, test_loader, kernel_x, kernel_y, mask, tukey_window)
-        r2_history[epoch] = r2
-        
+        metrics = evaluate_model(model, test_loader, kernel_x, kernel_y, mask, tukey_window)
+        grad_r2 = metrics['gradient_r2']
+        velocity_r2 = metrics['velocity_r2']
+        spec_loss = metrics['spec_loss']
+        history['gradient_r2'][epoch] = grad_r2
+        history['velocity_r2'][epoch] = velocity_r2
+        history['spec_loss'][epoch] = spec_loss
+
+        if velocity_r2 > best_summary['best_velocity_r2']:
+            best_summary['best_velocity_r2'] = velocity_r2
+            best_summary['best_velocity_epoch'] = epoch + 1
+
         # Track best model
-        if r2 > best_r2:
-            best_r2 = r2
+        if grad_r2 > best_r2:
+            best_r2 = grad_r2
             best_model = deepcopy(model)
+            best_summary.update({
+                'best_gradient_r2': grad_r2,
+                'best_gradient_epoch': epoch + 1,
+                'selected_epoch': epoch + 1,
+                'selected_gradient_r2': grad_r2,
+                'selected_velocity_r2': velocity_r2,
+                'selected_spec_loss': spec_loss,
+            })
             
             # Save checkpoint and run inference
             checkpoint_path = f'{model_str}_{config.step0}_{config.nframes}_{config.c_spec}cs.pth'
             save_model(best_model, checkpoint_path)
             
             # Write test results
-            write_test_results(
-                epoch, best_model, test_loader, kernel_x, kernel_y,
-                config.c_spec, model_str, config.output_dir
-            )
+            if not config.skip_eval_nc:
+                write_test_results(
+                    epoch, best_model, test_loader, kernel_x, kernel_y,
+                    config.c_spec, model_str, config.output_dir
+                )
             
             # Process satellite data
-            out_val, grad_val, sst_val = run_satellite_inference(
-                best_model, config.goes_file, config.valid_inds,
-                config.pm, config.pn
-            )
-            
-            # Write satellite predictions
-            output_file = f'preds_{model_str}_{config.step0}_{config.nframes}_{config.c_spec}cs{config.goes_file}'
-            write_satellite_netcdf(output_file, out_val, grad_val, sst_val,
-                                   config.valid_inds, config.goes_file)
-        
+            if not config.skip_satellite:
+                out_val, grad_val, sst_val = run_satellite_inference(
+                    best_model, config.goes_file, config.valid_inds,
+                    config.pm, config.pn
+                )
+
+                # Write satellite predictions
+                output_file = f'preds_{model_str}_{config.step0}_{config.nframes}_{config.c_spec}cs{config.goes_file}'
+                write_satellite_netcdf(output_file, out_val, grad_val, sst_val,
+                                       config.valid_inds, config.goes_file)
+
         if spec_loss < best_spec:
             best_spec = spec_loss
-        
-        print(f'Epoch {epoch+1}/{config.epochs} | R²: {r2:.4f} (best: {best_r2:.4f}) | '
+            best_summary['best_spec_loss'] = spec_loss
+            best_summary['best_spec_epoch'] = epoch + 1
+
+        print(f'Epoch {epoch+1}/{config.epochs} | '
+              f'gradR²: {grad_r2:.4f} (best: {best_r2:.4f}) | '
+              f'velR²: {velocity_r2:.4f} (best: {best_summary["best_velocity_r2"]:.4f}) | '
               f'Spec: {spec_loss:.4f} (best: {best_spec:.4f})')
     
-    return best_model, r2_history
+    return best_model, {'history': history, 'summary': best_summary}
+
+
+def load_spatial_regions(regions_file: str, fold: int):
+    """Load train/test boxes from a JSON file for spatial transfer tests."""
+    with open(regions_file, 'r') as f:
+        payload = json.load(f)
+    if isinstance(payload, dict):
+        boxes = payload.get('boxes', payload.get('regions'))
+    else:
+        boxes = payload
+    if boxes is None:
+        raise ValueError(f'{regions_file} must contain a "boxes" or "regions" list')
+    boxes = [tuple(int(v) for v in box) for box in boxes]
+    if fold < 0 or fold >= len(boxes):
+        raise ValueError(f'--fold must be in [0, {len(boxes)-1}] for {regions_file}')
+    test_inds = boxes[fold]
+    train_inds = [box for idx, box in enumerate(boxes) if idx != fold]
+    return train_inds, test_inds
+
+
+def write_metrics_json(path: str, config: argparse.Namespace, metrics: dict):
+    """Write compact metric histories and best values for reproducibility."""
+    payload = {
+        'config': vars(config).copy(),
+        'summary': metrics['summary'],
+        'history': {key: value.tolist() for key, value in metrics['history'].items()},
+    }
+    with open(path, 'w') as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
 
 
 # =============================================================================
@@ -349,7 +443,7 @@ def write_satellite_netcdf(
     with NCDataset(goes_file, 'r') as nch:
         varnames = ['U', 'V', 'Vorticity', 'Divergence', 'Strain', 'BT', 'loggrad_BT']
         nc = ncCreate(output_file, nx, ny, varnames, dt=2)
-        
+
         for it in tqdm(range(nt), desc='Writing NetCDF'):
             BT = nch.variables['BT'][it + 12, 
                                      valid_inds[0]:valid_inds[1],
@@ -363,7 +457,7 @@ def write_satellite_netcdf(
             addVal(nc, 'loggrad_BT', sst_val[it, :, :], it)
         
         nc.close()
-    
+
     writeGridSat(goes_file, output_file, valid_inds)
 
 
@@ -465,6 +559,11 @@ def main():
             step0=1,
             pm=5.0,
             pn=5.0,
+            skip_satellite=False,
+            skip_eval_nc=False,
+            metrics_file='',
+            regions_file='',
+            fold=-1,
         )
         print('Using legacy argument mode')
     else:
@@ -477,22 +576,35 @@ def main():
     if args.epochs is None:
         args.epochs = 100 if args.c_spec == 0 else 50
     
-    # Get grid dimensions from GOES file
-    with NCDataset(args.goes_file, 'r') as nc:
-        Nx = nc.dimensions['lon'].size
-        Ny = nc.dimensions['lat'].size
-    
-    # Define training/test/validation regions
-    train_inds = [
-        (0, 256, 256, 512),
-        (0, 256, 512, 768),
-        (256, 512, 256, 512),
-        (256, 512, 512, 768),
-        (256, 512, Nx - 256, Nx)
-    ]
-    test_inds = (0, 256, Nx - 256, Nx)
-    valid_inds = (0, 512, Nx - 768, Nx)
+    if args.regions_file:
+        train_inds, test_inds = load_spatial_regions(args.regions_file, args.fold)
+        valid_inds = test_inds
+    else:
+        # Get grid dimensions from GOES file when available, matching the paper split.
+        # If satellite inference is disabled and the GOES file is absent, fall back to
+        # LLC dimensions; for the paper data these dimensions are identical.
+        if os.path.exists(args.goes_file):
+            with NCDataset(args.goes_file, 'r') as nc:
+                Nx = nc.dimensions['lon'].size
+        else:
+            if not args.skip_satellite:
+                raise FileNotFoundError(args.goes_file)
+            with NCDataset(args.llc_file, 'r') as nc:
+                Nx = nc.dimensions['lon'].size
+
+        # Define training/test/validation regions
+        train_inds = [
+            (0, 256, 256, 512),
+            (0, 256, 512, 768),
+            (256, 512, 256, 512),
+            (256, 512, 512, 768),
+            (256, 512, Nx - 256, Nx)
+        ]
+        test_inds = (0, 256, Nx - 256, Nx)
+        valid_inds = (0, 512, Nx - 768, Nx)
     args.valid_inds = valid_inds  # Store for later use
+    print(f'Train regions: {train_inds}')
+    print(f'Test region: {test_inds}')
     
     # Batch sizes depend on model complexity
     if args.model == 'samudra0' or args.nbase == 32:
@@ -542,24 +654,32 @@ def main():
     criterion = nn.L1Loss()
     
     # Train
-    best_model, r2_history = train_model(
+    best_model, metrics = train_model(
         model, train_loader, test_loader,
         optimizer, criterion, args, device
     )
     
     # Save final results
-    np.save(f'r2_{model_str}_ver_{args.c_spec}cs.npy', r2_history)
+    np.save(f'r2_{model_str}_ver_{args.c_spec}cs.npy', metrics['history']['gradient_r2'])
+    np.savez(
+        f'metrics_{model_str}_ver_{args.c_spec}cs.npz',
+        **metrics['history'],
+        **{key: np.asarray(value) for key, value in metrics['summary'].items()}
+    )
+    metrics_file = args.metrics_file or f'metrics_{model_str}_ver_{args.c_spec}cs.json'
+    write_metrics_json(metrics_file, args, metrics)
     save_model(best_model, f'{model_str}_{args.step0}_{args.nframes}_{args.c_spec}cs.pth')
     
     # Final satellite inference
-    out_val, grad_val, sst_val = run_satellite_inference(
-        best_model, args.goes_file, args.valid_inds,
-        args.pm, args.pn
-    )
-    
-    output_file = f'preds_{model_str}_{args.step0}_{args.nframes}_{args.c_spec}cs{args.goes_file}'
-    write_satellite_netcdf(output_file, out_val, grad_val, sst_val, args.valid_inds, args.goes_file)
-    
+    if not args.skip_satellite:
+        out_val, grad_val, sst_val = run_satellite_inference(
+            best_model, args.goes_file, args.valid_inds,
+            args.pm, args.pn
+        )
+
+        output_file = f'preds_{model_str}_{args.step0}_{args.nframes}_{args.c_spec}cs{args.goes_file}'
+        write_satellite_netcdf(output_file, out_val, grad_val, sst_val, args.valid_inds, args.goes_file)
+
     print('Training complete!')
 
 

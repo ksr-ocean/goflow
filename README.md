@@ -6,6 +6,11 @@ Deep learning framework for predicting ocean surface velocity fields from satell
 
 GOFLOW trains neural networks to infer ocean flow dynamics (U, V velocity components) from thermal gradient patterns observed in satellite imagery. The approach leverages the physical relationship between SST gradients and surface currents to enable velocity estimation from widely available satellite observations.
 
+**IGW filtering note:** GOFLOW predicts velocities with internal gravity wave
+(IGW) variability removed. The LLC training velocities are filtered with an
+18-hour window to eliminate IGWs, while SST gradients are used as input because
+SST is not strongly affected by IGWs.
+
 **Key Features:**
 - Multiple neural network architectures (UNet, ConvNeXt-style, lightweight CNN)
 - Hybrid loss functions combining L1, spectral, and gradient-based losses
@@ -33,6 +38,17 @@ pip install torch numpy scipy scikit-learn netCDF4 tqdm
 ```
 
 ## Quick Start
+
+### Data
+
+The small LLC training file used by the paper-scale examples is
+`llcGoes_gradT_trunc.nc`. Download it from Google Drive:
+
+```text
+https://drive.google.com/file/d/1fbwdcDnkHZ6UJMr4QM_qP2AFX9faAzeC/view?usp=sharing
+```
+
+Place the file in the repository root, or pass its location with `--llc_file`.
 
 ### Training
 
@@ -108,6 +124,11 @@ Where `auxiliary_loss` is either:
 | `--tcycle` | 5 | Cosine annealing cycle length |
 | `--nframes` | 3 | Number of input SST frames |
 | `--step0` | 1 | Time step stride between frames |
+| `--skip_satellite` | False | Skip satellite inference/writes during training |
+| `--skip_eval_nc` | False | Skip bulky test-set NetCDF exports |
+| `--metrics_file` | - | Optional JSON output for metric histories and best values |
+| `--regions_file` | - | Optional JSON file of spatial boxes for transfer tests |
+| `--fold` | -1 | Held-out box index when using `--regions_file` |
 
 ## Inference Arguments
 
@@ -186,6 +207,29 @@ lgt_<model><nbase>_<step0>_<nframes>_<c_spec>cs.pth
 
 Example: `lgt_unet16_1_3_0.5cs.pth`
 
+## Reproduction Metrics
+
+Training now writes compact metric artifacts in addition to the legacy
+`r2_*.npy` file:
+
+- `metrics_<model>_ver_<c_spec>cs.json`: configuration, per-epoch histories,
+  and selected-checkpoint metrics
+- `metrics_<model>_ver_<c_spec>cs.npz`: NumPy form of the same histories and
+  summary values
+
+The JSON summary tracks selected gradient R2, velocity R2, spectral loss, and
+the best velocity/spectral epochs. These additions do not change the model,
+losses, optimizer, or default training split.
+
+## Spatial Transferability
+
+An optional spatial transferability demo is documented in
+[`docs/spatial_transferability.md`](docs/spatial_transferability.md). It uses
+the original GOFLOW architecture and training recipe with user-provided
+held-out spatial boxes and includes one example stage-1 fold map. This is a
+demo harness for the existing approach, not a new model or a replacement for
+the paper benchmark.
+
 ## Citation
 
 If you use GOFLOW in your research, please cite:
@@ -194,9 +238,12 @@ If you use GOFLOW in your research, please cite:
 @article{lenain2026unprecedented,
   title={An unprecedented view of ocean currents from geostationary satellites},
   author={Lenain, Luc and Srinivasan, Kaushik and Barkan, Roy and Pizzo, Nick},
-  journal={Nature Geosciences},
+  journal={Nature Geoscience},
   year={2026},
-  note={in press}
+  month={Apr},
+  day={13},
+  doi={10.1038/s41561-026-01943-0},
+  url={https://doi.org/10.1038/s41561-026-01943-0}
 }
 ```
 
