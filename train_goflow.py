@@ -94,11 +94,15 @@ def parse_args():
 
 
 def setup_device(cuda_idx: int) -> torch.device:
-    """Configure CUDA device and clear memory."""
-    device = torch.device(f'cuda:{cuda_idx}' if torch.cuda.is_available() else 'cpu')
+    """Configure compute device. Prefers CUDA, then Apple MPS, then CPU."""
     if torch.cuda.is_available():
+        device = torch.device(f'cuda:{cuda_idx}')
         torch.cuda.set_device(cuda_idx)
         torch.cuda.empty_cache()
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     gc.collect()
     print(f'Device: {device}')
     return device
@@ -205,7 +209,10 @@ def evaluate_model(
             total_velocity_r2 += velocity_r2
             total_spec_loss += spec_loss.item()
             count += 1
-    
+            # MPS allocator can balloon over many large batches; release each step.
+            if kernel_x.device.type == 'mps':
+                torch.mps.empty_cache()
+
     return {
         'gradient_r2': total_grad_r2 / count,
         'velocity_r2': total_velocity_r2 / count,
@@ -396,7 +403,9 @@ def run_satellite_inference(
     kernel_y = dy_kernel(pn).to(device)
     
     goes_dataset = SatelliteDataset(goes_file, ['log_gradT'], valid_inds, train=False)
-    goes_loader = DataLoader(goes_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    # num_workers=0 on macOS — netCDF file handles do not survive process spawn.
+    nw = 0 if sys.platform == 'darwin' else 4
+    goes_loader = DataLoader(goes_dataset, batch_size=batch_size, shuffle=False, num_workers=nw)
     
     out_list = []
     grad_list = []
@@ -416,7 +425,10 @@ def run_satellite_inference(
             ux, uy, vx, vy = compute_velocity_gradients(out, kernel_x, kernel_y)
             vort, div, strain = compute_derived_fields(ux, uy, vx, vy)
             grad_list.append(torch.stack((vort, div, strain), dim=1).cpu().numpy())
-    
+
+            if device.type == 'mps':
+                torch.mps.empty_cache()
+
     out_val = np.concatenate(out_list, axis=0)
     grad_val = np.concatenate(grad_list, axis=0)
     sst_val = np.concatenate(sst_list, axis=0).squeeze()
@@ -618,7 +630,11 @@ def main():
         args.llc_file, varlist, train_inds, test_inds,
         step0=args.step0, nframes=args.nframes
     )
-    train_loader, test_loader = create_dataloaders(train_data, test_data, batch_sizes=batch_sizes)
+    # num_workers=0 on macOS — netCDF file handles do not survive process spawn.
+    nw = 0 if sys.platform == 'darwin' else 5
+    train_loader, test_loader = create_dataloaders(train_data, test_data,
+                                                   batch_sizes=batch_sizes,
+                                                   num_workers=nw)
     
     # Initialize model
     sample_x, sample_y = next(iter(test_loader))
