@@ -6,10 +6,10 @@ Deep learning framework for predicting ocean surface velocity fields from satell
 
 GOFLOW trains neural networks to infer ocean flow dynamics (U, V velocity components) from thermal gradient patterns observed in satellite imagery. The approach leverages the physical relationship between SST gradients and surface currents to enable velocity estimation from widely available satellite observations.
 
-**IGW filtering note:** GOFLOW predicts velocities with internal gravity wave
+**IGW filtering note: GOFLOW predicts velocities with internal gravity wave
 (IGW) variability removed. The LLC training velocities are filtered with an
 18-hour window to eliminate IGWs, while SST gradients are used as input because
-SST is not strongly affected by IGWs.
+SST is not strongly affected by IGWs.**
 
 **Key Features:**
 - Multiple neural network architectures (UNet, ConvNeXt-style, lightweight CNN)
