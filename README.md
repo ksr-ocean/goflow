@@ -47,8 +47,14 @@ The small LLC-subset training file used by the paper-scale examples is
 ```text
 https://drive.google.com/file/d/1fbwdcDnkHZ6UJMr4QM_qP2AFX9faAzeC/view?usp=sharing
 ```
-
 Place the file in the repository root, or pass its location with `--llc_file`.
+### GOES satellite inference Data
+The GOES datasets which have been used to generate the figures in the paper and for validation and testing are provided below.
+- the dataset that corresponds to the NESMA experiment used for validating GOFLOW
+  https://drive.google.com/file/d/1i7Ml9LxQEA0hMmVASdIwan8dv3y1tV_l/view?usp=drive_link
+- the dataset that has a clean cloud free period of data and was used to generate Figure 1
+  https://drive.google.com/file/d/15WUoI8p8r2pgb69QdU3g4ydUR0m8Q9Wb/view?usp=drive_link
+Both these datasets have been preprocessed to add log[grad T] inputs and can be directly used with the inference scripts.
 
 ### Training
 
