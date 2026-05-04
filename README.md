@@ -47,6 +47,18 @@ The small LLC-subset training file used by the paper-scale examples is
 https://drive.google.com/file/d/1fbwdcDnkHZ6UJMr4QM_qP2AFX9faAzeC/view?usp=sharing
 
 Place the file in the repository root, or pass its location with `--llc_file`.
+
+<details>
+<summary><b>Getting a "Download Quota Exceeded" error? Click here for a quick workaround.</b></summary>
+
+Google Drive occasionally limits downloads on large public files. You can easily bypass this by downloading a personal copy:
+1. Sign in to your Google account and open the dataset link above.
+2. Click the **"Add shortcut to Drive"** icon at the top right.
+3. Open your own Google Drive (`drive.google.com`) in a new tab.
+4. Right-click the shortcut you just created and select **"Make a copy"**.
+5. Right-click the newly generated copy and select **"Download"** (you can delete the copy afterward).
+</details>
+
 ### GOES satellite inference Data
 The GOES datasets which have been used to generate the figures in the paper and for validation and testing are provided below.
 - the dataset that corresponds to the NESMA experiment used for validating GOFLOW
