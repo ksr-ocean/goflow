@@ -85,11 +85,12 @@ def compute_derived_fields(
     Returns:
         Tuple of (vorticity, divergence, strain_magnitude)
     """
+    eps = 1e-14
     vorticity = vx - uy
     divergence = ux + vy
     s1 = ux - vy  # Normal strain
     s2 = vx + uy  # Shear strain
-    strain = torch.sqrt(s1**2 + s2**2)
+    strain = torch.sqrt(s1**2 + s2**2 + eps)
     return vorticity, divergence, strain
 
 

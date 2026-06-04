@@ -125,7 +125,7 @@ def spectral_loss(
     Returns:
         MSE loss in log-spectral space
     """
-    if len(y_pred) == 3:
+    if len(y_pred.shape) == 3:
         u_pred, v_pred = y_pred[0, ...], y_pred[1, ...]
         u_true, v_true = y_true[0, ...], y_true[1, ...]
         u_pred = u_pred *  tukey
@@ -197,7 +197,8 @@ def mirror_ke_spectrum_2d(u: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 def spectral_loss_mirror(
     y_pred: torch.Tensor,
-    y_true: torch.Tensor
+    y_true: torch.Tensor,
+    eps: float = 1e-10
 ) -> torch.Tensor:
     """
     Compute spectral loss using mirror-padded FFT.
@@ -208,11 +209,12 @@ def spectral_loss_mirror(
     Args:
         y_pred: Predicted velocity field (B, 2, H, W) or (2, H, W)
         y_true: Target velocity field (B, 2, H, W) or (2, H, W)
+        eps: Small constant for numerical stability in log
 
     Returns:
         MSE loss in log-spectral space
     """
-    if len(y_pred) == 3:
+    if len(y_pred.shape) == 3:
         u_pred, v_pred = y_pred[0, ...], y_pred[1, ...]
         u_true, v_true = y_true[0, ...], y_true[1, ...]
     else:
@@ -221,8 +223,8 @@ def spectral_loss_mirror(
     
     ke_pred = mirror_ke_spectrum_2d(u_pred, v_pred)
     ke_true = mirror_ke_spectrum_2d(u_true, v_true)
-    log_ke_pred = torch.log(ke_pred)
-    log_ke_true = torch.log(ke_true)
+    log_ke_pred = torch.log(ke_pred + eps)
+    log_ke_true = torch.log(ke_true + eps)
     return F.mse_loss(log_ke_pred, log_ke_true)
 
 
