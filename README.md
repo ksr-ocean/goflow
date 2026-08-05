@@ -85,10 +85,21 @@ python train_goflow.py --cuda 0 --model unet --c_spec 0.5 --use_grad_loss
 
 ```bash
 # Run inference on GOES satellite data
-python inf_llc_stage1.py --model_file lgt_unet16_1_3_0.5cs.pth --goes_files satellite_data.nc
+python inf_llc_stage1.py --model_file lgt_unet16_1_3_0.5cs.pth --inp_norm --goes_files satellite_data.nc
 
-# With input normalization (if model was trained with it)
-python inf_llc_stage1.py --model_file model.pth --inp_norm --goes_files data.nc
+# Legacy checkpoints trained without input normalization: omit the flag
+python inf_llc_stage1.py --model_file legacy_model.pth --goes_files data.nc
+```
+
+> **`--inp_norm` is required for any checkpoint produced by `train_goflow.py`.**
+> Training builds the model with input normalization enabled (`initialize_model`
+> defaults to `inp_norm=True`), while inference defaults to `False`. Omitting the
+> flag fails with `Unexpected key(s) in state_dict: "bn.weight", "bn.bias", ...`.
+
+To check an existing checkpoint:
+
+```bash
+python -c "import torch; sd = torch.load('model.pth', map_location='cpu'); print('needs --inp_norm:', any(k.startswith('bn.') for k in sd))"
 ```
 
 ## Architecture
@@ -155,7 +166,7 @@ Where `auxiliary_loss` is either:
 | `--model_file` | Required | Path to trained model checkpoint |
 | `--goes_files` | - | GOES satellite data files to process |
 | `--nbase` | 16 | Base channels (must match training) |
-| `--inp_norm` | False | Enable input normalization |
+| `--inp_norm` | False | Enable input normalization. **Required for checkpoints from `train_goflow.py`**, which trains with it enabled |
 | `--blend_alpha` | 0.5 | Test result blending factor |
 | `--skip_test` | False | Skip test set evaluation |
 | `--skip_satellite` | False | Skip satellite data processing |
